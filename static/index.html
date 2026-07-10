@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Captura Recetas — El Taller</title>
+<style>
+:root{--dark:#843C00;--med:#C55A00;--blue:#2E4057;--bg:#FBF6F0;--ok:#2e7d32;--warn:#c62828}
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+body{background:var(--bg);color:#222;padding-bottom:80px}
+header{background:var(--dark);color:#fff;padding:12px 16px;position:sticky;top:0;z-index:5}
+header h1{font-size:17px}
+header small{opacity:.8}
+nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:2px solid var(--dark);z-index:5}
+nav button{flex:1;padding:12px 4px;border:0;background:none;font-size:12px;font-weight:700;color:#666}
+nav button.act{color:var(--dark);border-top:3px solid var(--med)}
+main{padding:14px;max-width:640px;margin:0 auto}
+.card{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+label{display:block;font-size:12px;font-weight:700;color:var(--blue);margin:10px 0 4px}
+input,select,textarea{width:100%;padding:12px;font-size:16px;border:1.5px solid #ccc;border-radius:8px;background:#fff}
+input:focus,select:focus{border-color:var(--med);outline:none}
+.row{display:flex;gap:8px}.row>div{flex:1}
+.btn{width:100%;padding:14px;font-size:16px;font-weight:800;color:#fff;background:var(--med);border:0;border-radius:10px;margin-top:14px}
+.btn.sec{background:var(--blue)}.btn.small{width:auto;padding:8px 14px;font-size:13px;margin:0}
+.item{display:flex;justify-content:space-between;align-items:center;padding:10px 4px;border-bottom:1px solid #eee;font-size:14px}
+.item b{color:var(--dark)}
+.pill{font-size:11px;font-weight:800;padding:3px 8px;border-radius:99px;background:#eee}
+.pill.CAPTURADA{background:#dcedc8;color:var(--ok)}.pill.DUDA{background:#ffcdd2;color:var(--warn)}
+.tot{font-size:15px;font-weight:800;color:var(--dark);text-align:right;margin-top:8px}
+.del{color:var(--warn);border:0;background:none;font-size:18px;padding:4px 8px}
+.hint{font-size:12px;color:#777;margin-top:6px}
+#login{position:fixed;inset:0;background:var(--dark);display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:99;color:#fff}
+#login input{max-width:220px;text-align:center;font-size:26px;letter-spacing:8px}
+#login .btn{max-width:220px;background:#fff;color:var(--dark)}
+h2{font-size:15px;color:var(--dark);margin-bottom:8px}
+.selrec{background:#FFF2CC;border:2px solid var(--med);border-radius:10px;padding:10px;font-weight:800;margin-bottom:12px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="login">
+  <h1 style="margin-bottom:20px">🍞 El Taller de Cocina</h1>
+  <p style="margin-bottom:10px">PIN de acceso</p>
+  <input id="pin" type="tel" maxlength="6" autocomplete="off">
+  <button class="btn" onclick="doLogin()">ENTRAR</button>
+  <p id="loginerr" style="color:#ffcdd2;margin-top:10px"></p>
+</div>
+
+<header><h1>Captura de Recetas y Procesos</h1><small id="sub">—</small></header>
+<main id="main"></main>
+<nav>
+  <button id="t-rec" class="act" onclick="show('rec')">📋 Recetas</button>
+  <button id="t-ing" onclick="show('ing')">⚖️ Ingredientes</button>
+  <button id="t-pro" onclick="show('pro')">👣 Procesos</button>
+  <button id="t-ren" onclick="show('ren')">🥩 Rendim.</button>
+  <button id="t-exp" onclick="show('exp')">📤 Exportar</button>
+</nav>
+
+<script>
+let PIN=localStorage.getItem('pin')||'', CAN=[], RECS=[], SEL=null, TAB='rec';
+const $=id=>document.getElementById(id);
+const H={headers:()=>({'Content-Type':'application/json','X-PIN':PIN})};
+async function api(p,opt={}){const r=await fetch('/api'+p,{...opt,headers:H.headers()});if(r.status===401){logout();throw 0}return r.json()}
+function logout(){localStorage.removeItem('pin');$('login').style.display='flex'}
+async function doLogin(){PIN=$('pin').value;try{await api('/login');localStorage.setItem('pin',PIN);$('login').style.display='none';boot()}catch(e){$('loginerr').textContent='PIN incorrecto'}}
+async function boot(){CAN=await api('/canonicos');await loadRecs();show('rec')}
+async function loadRecs(){RECS=await api('/recetas');$('sub').textContent=RECS.filter(r=>r.estado==='CAPTURADA').length+' capturadas de '+RECS.length}
+function selReceta(id){SEL=RECS.find(r=>r.id===id);show(TAB==='rec'?'ing':TAB)}
+function selHtml(){return SEL?`<div class="selrec">Receta activa: ${SEL.nombre} <button class="btn small sec" style="float:right" onclick="show('rec')">cambiar</button></div>`:`<div class="selrec">⚠️ Elige una receta en la pestaña Recetas</div>`}
+function money(v){return '$'+Math.round(v||0).toLocaleString('es-CO')}
+
+function show(t){TAB=t;['rec','ing','pro','ren','exp'].forEach(x=>$('t-'+x).classList.toggle('act',x===t));
+ if(t==='rec')vRec();if(t==='ing')vIng();if(t==='pro')vPro();if(t==='ren')vRen();if(t==='exp')vExp()}
+
+// ---------- RECETAS ----------
+function vRec(){
+ let list=RECS.map(r=>`<div class="item" onclick="selReceta(${r.id})">
+   <div><b>${r.nombre}</b><br><small>${r.area} · ${r.tipo} · ${r.n_ing} ing · ${r.n_pasos} pasos · ${money(r.costo)}</small></div>
+   <span class="pill ${r.estado}">${r.estado}</span></div>`).join('');
+ $('main').innerHTML=`<div class="card"><h2>➕ Nueva / editar receta</h2>
+  <label>Nombre</label><input id="r-nom" list="dl-rec"><datalist id="dl-rec">${RECS.map(r=>`<option value="${r.nombre}">`).join('')}</datalist>
+  <div class="row"><div><label>Área</label><select id="r-area"><option>Restaurante</option><option>Panadería</option><option>Bebidas</option></select></div>
+  <div><label>Tipo</label><select id="r-tipo"><option>PLATO</option><option>BASE</option></select></div></div>
+  <div class="row"><div><label>Peso crudo total (g)</label><input id="r-crudo" type="number"></div>
+  <div><label>RINDE final pesado (g)</label><input id="r-rinde" type="number"></div></div>
+  <div class="row"><div><label>Porciones</label><input id="r-porc" type="number"></div>
+  <div><label>Precio carta $</label><input id="r-precio" type="number"></div></div>
+  <label>Tiempo + temperatura</label><input id="r-tt" placeholder="ej: 25 min horno 180°C">
+  <label>Notas / quién la hace</label><input id="r-notas">
+  <label>Estado</label><select id="r-est"><option>PENDIENTE</option><option>CAPTURADA</option><option>DUDA</option></select>
+  <button class="btn" onclick="saveRec()">GUARDAR RECETA</button></div>
+  <div class="card"><h2>Recetas (toca una para capturar)</h2>${list}</div>`;
+ $('r-nom').addEventListener('change',e=>{const r=RECS.find(x=>x.nombre===e.target.value);if(r){$('r-area').value=r.area;$('r-tipo').value=r.tipo;$('r-crudo').value=r.peso_crudo||'';$('r-rinde').value=r.rinde_final||'';$('r-porc').value=r.porciones||'';$('r-precio').value=r.precio_carta||'';$('r-tt').value=r.tiempo_temp||'';$('r-notas').value=r.notas||'';$('r-est').value=r.estado}});
+}
+async function saveRec(){
+ const b={nombre:$('r-nom').value.trim(),area:$('r-area').value,tipo:$('r-tipo').value,
+  peso_crudo:+$('r-crudo').value||null,rinde_final:+$('r-rinde').value||null,porciones:+$('r-porc').value||null,
+  precio_carta:+$('r-precio').value||null,tiempo_temp:$('r-tt').value||null,notas:$('r-notas').value||null,estado:$('r-est').value};
+ if(!b.nombre)return alert('Falta el nombre');
+ const res=await api('/recetas',{method:'POST',body:JSON.stringify(b)});
+ await loadRecs();SEL=RECS.find(r=>r.id===res.id);vRec();window.scrollTo(0,0)}
+
+// ---------- INGREDIENTES ----------
+async function vIng(){
+ if(!SEL){$('main').innerHTML=selHtml();return}
+ const d=await api('/recetas/'+SEL.id);
+ const tot=d.ingredientes.reduce((s,i)=>s+(i.subtotal||0),0);
+ $('main').innerHTML=selHtml()+`<div class="card"><h2>⚖️ Agregar ingrediente (pesado en gramos)</h2>
+  <label>Ingrediente (busca en la lista canónica)</label><input id="i-nom" list="dl-can"><datalist id="dl-can">${CAN.map(c=>`<option value="${c.nombre}">`).join('')}</datalist>
+  <label>Cantidad (g / ml)</label><input id="i-cant" type="number" inputmode="decimal">
+  <label>Si es NUEVO: proveedor + presentación + precio</label><input id="i-nuevo" placeholder="solo si no está en la lista">
+  <button class="btn" onclick="saveIng()">AGREGAR</button><p class="hint" id="i-hint"></p></div>
+  <div class="card"><h2>Ingredientes capturados</h2>
+  ${d.ingredientes.map(i=>`<div class="item"><div><b>${i.nombre}</b><br><small>${i.cantidad}g × ${i.precio_gr??'⚠️ nuevo'} = ${i.subtotal?money(i.subtotal):'—'}</small></div><button class="del" onclick="delIng(${i.id})">✕</button></div>`).join('')}
+  <div class="tot">Costo receta: ${money(tot)}</div></div>`;
+ $('i-nom').addEventListener('input',e=>{const c=CAN.find(x=>x.nombre===e.target.value);$('i-hint').textContent=c?`✓ en lista: $${c.precio_gr}/gr`:''});
+}
+async function saveIng(){
+ const n=$('i-nom').value.trim(),q=+$('i-cant').value;
+ if(!n||!q)return alert('Falta ingrediente o cantidad');
+ await api('/ingredientes',{method:'POST',body:JSON.stringify({receta_id:SEL.id,nombre:n,cantidad:q,nota_nuevo:$('i-nuevo').value||null})});
+ vIng()}
+async function delIng(id){await api('/ingredientes/'+id,{method:'DELETE'});vIng()}
+
+// ---------- PROCESOS ----------
+async function vPro(){
+ if(!SEL){$('main').innerHTML=selHtml();return}
+ const d=await api('/recetas/'+SEL.id);
+ const next=d.pasos.length+1;
+ const act=d.pasos.reduce((s,p)=>s+(p.min_activo||0),0), pas=d.pasos.reduce((s,p)=>s+(p.min_pasivo||0),0);
+ $('main').innerHTML=selHtml()+`<div class="card"><h2>👣 Paso ${next}</h2>
+  <label>Etapa</label><select id="p-etapa"><option>MISE EN PLACE</option><option>PRODUCCIÓN</option><option>COCCIÓN</option><option>ENFRIADO/REPOSO</option><option>ARMADO</option><option>EMPAQUE/SERVICIO</option></select>
+  <label>Descripción del paso</label><textarea id="p-desc" rows="2"></textarea>
+  <div class="row"><div><label>Rol / quién</label><input id="p-rol" placeholder="panadero, auxiliar..."></div>
+  <div><label># Personas</label><input id="p-pers" type="number" value="1"></div></div>
+  <div class="row"><div><label>Min ACTIVOS (trabajando)</label><input id="p-act" type="number"></div>
+  <div><label>Min PASIVOS (horno/reposo)</label><input id="p-pas" type="number"></div></div>
+  <label>Equipo</label><input id="p-eq" placeholder="horno, batidora, estufa...">
+  <label>Punto crítico / nota</label><input id="p-nota">
+  <button class="btn" onclick="savePaso(${next})">AGREGAR PASO</button></div>
+  <div class="card"><h2>Pasos (${d.pasos.length}) · activo ${act} min · pasivo ${pas} min</h2>
+  ${d.pasos.map(p=>`<div class="item"><div><b>${p.num}. [${p.etapa}]</b> ${p.descripcion}<br><small>${p.rol||''} · ${p.personas}p · ${p.min_activo||0}min act + ${p.min_pasivo||0}min pas ${p.equipo?'· '+p.equipo:''}</small></div><button class="del" onclick="delPaso(${p.id})">✕</button></div>`).join('')}</div>`}
+async function savePaso(n){
+ if(!$('p-desc').value.trim())return alert('Falta la descripción');
+ await api('/pasos',{method:'POST',body:JSON.stringify({receta_id:SEL.id,num:n,etapa:$('p-etapa').value,descripcion:$('p-desc').value,rol:$('p-rol').value||null,personas:+$('p-pers').value||1,min_activo:+$('p-act').value||null,min_pasivo:+$('p-pas').value||null,equipo:$('p-eq').value||null,nota:$('p-nota').value||null})});
+ vPro()}
+async function delPaso(id){await api('/pasos/'+id,{method:'DELETE'});vPro()}
+
+// ---------- RENDIMIENTOS ----------
+async function vRen(){
+ const rs=await api('/rendimientos');
+ $('main').innerHTML=`<div class="card"><h2>🥩 Rendimiento de ingrediente (bruto → limpio → cocido)</h2>
+  <label>Ingrediente</label><input id="n-nom" list="dl-can2"><datalist id="dl-can2">${CAN.map(c=>`<option value="${c.nombre}">`).join('')}</datalist>
+  <div class="row"><div><label>Bruto (g)</label><input id="n-b" type="number"></div>
+  <div><label>Limpio (g)</label><input id="n-l" type="number"></div>
+  <div><label>Cocido (g)</label><input id="n-c" type="number"></div></div>
+  <button class="btn" onclick="saveRen()">GUARDAR</button></div>
+  <div class="card"><h2>Capturados</h2>${rs.map(r=>{
+   const pl=r.bruto&&r.limpio?Math.round(100*r.limpio/r.bruto)+'%':'—';
+   const pc=r.limpio&&r.cocido?Math.round(100*r.cocido/r.limpio)+'%':'—';
+   return `<div class="item"><div><b>${r.ingrediente}</b><br><small>bruto ${r.bruto||'—'}g → limpio ${r.limpio||'—'}g (${pl}) → cocido ${r.cocido||'—'}g (${pc})</small></div></div>`}).join('')}</div>`}
+async function saveRen(){
+ if(!$('n-nom').value.trim())return alert('Falta el ingrediente');
+ await api('/rendimientos',{method:'POST',body:JSON.stringify({ingrediente:$('n-nom').value,bruto:+$('n-b').value||null,limpio:+$('n-l').value||null,cocido:+$('n-c').value||null})});
+ vRen()}
+
+// ---------- EXPORT ----------
+function vExp(){
+ $('main').innerHTML=`<div class="card"><h2>📤 Exportar a Excel</h2>
+  <p style="font-size:14px;line-height:1.5">Descarga todo lo capturado (recetas, ingredientes, procesos y rendimientos) en un solo .xlsx para cargarlo al sistema integrado de costos.</p>
+  <button class="btn" onclick="location.href='/api/export?x_pin='+PIN">DESCARGAR EXCEL</button>
+  <button class="btn sec" onclick="logout()">Cerrar sesión</button></div>`}
+
+if(PIN){api('/login').then(()=>{$('login').style.display='none';boot()}).catch(()=>{})}
+</script>
+</body>
+</html>
