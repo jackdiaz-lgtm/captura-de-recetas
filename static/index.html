@@ -28,6 +28,7 @@ input:focus,select:focus{border-color:var(--med);outline:none}
 .pill.CAPTURADA{background:#dcedc8;color:var(--ok)}.pill.DUDA{background:#ffcdd2;color:var(--warn)}
 .tot{font-size:15px;font-weight:800;color:var(--dark);text-align:right;margin-top:8px}
 .del{color:var(--warn);border:0;background:none;font-size:18px;padding:4px 8px}
+.sug{display:block;width:100%;text-align:left;padding:10px 12px;margin-top:4px;border:1.5px solid var(--med);border-radius:8px;background:#FFF6EC;font-size:15px;color:#3B2A1A}
 .hint{font-size:12px;color:#777;margin-top:6px}
 #login{position:fixed;inset:0;background:var(--dark);display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:99;color:#fff}
 #login input{max-width:220px;text-align:center;font-size:26px;letter-spacing:8px}
@@ -105,19 +106,32 @@ async function vIng(){
  const d=await api('/recetas/'+SEL.id);
  const tot=d.ingredientes.reduce((s,i)=>s+(i.subtotal||0),0);
  $('main').innerHTML=selHtml()+`<div class="card"><h2>⚖️ Agregar ingrediente (pesado en gramos)</h2>
-  <label>Ingrediente (busca en la lista canónica)</label><input id="i-nom" list="dl-can"><datalist id="dl-can">${CAN.map(c=>`<option value="${c.nombre}">`).join('')}</datalist>
+  <label>Ingrediente — escribe 2 letras y toca una sugerencia</label><input id="i-nom" autocomplete="off">
+  <div id="i-sug"></div>
   <label>Cantidad (g / ml)</label><input id="i-cant" type="number" inputmode="decimal">
   <label>Si es NUEVO: proveedor + presentación + precio</label><input id="i-nuevo" placeholder="solo si no está en la lista">
   <button class="btn" onclick="saveIng()">AGREGAR</button><p class="hint" id="i-hint"></p></div>
   <div class="card"><h2>Ingredientes capturados</h2>
   ${d.ingredientes.map(i=>`<div class="item"><div><b>${i.nombre}</b><br><small>${i.cantidad}g × ${i.precio_gr??'⚠️ nuevo'} = ${i.subtotal?money(i.subtotal):'—'}</small></div><button class="del" onclick="delIng(${i.id})">✕</button></div>`).join('')}
   <div class="tot">Costo receta: ${money(tot)}</div></div>`;
- $('i-nom').addEventListener('input',e=>{const c=CAN.find(x=>x.nombre===e.target.value);$('i-hint').textContent=c?`✓ en lista: $${c.precio_gr}/gr`:''});
+ const norm=s=>s.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'');
+ $('i-nom').addEventListener('input',e=>{
+  const v=norm(e.target.value.trim());
+  const exact=CAN.find(x=>norm(x.nombre)===v);
+  $('i-hint').textContent=exact?`✓ en lista: $${exact.precio_gr}/gr`:'';
+  if(v.length<2){$('i-sug').innerHTML='';return}
+  const m=CAN.filter(x=>norm(x.nombre).includes(v)).slice(0,8);
+  $('i-sug').innerHTML=m.map(x=>`<button class="sug" onclick="pickIng('${x.nombre.replace(/'/g,"\\\\'")}')">${x.nombre} · $${x.precio_gr}/gr</button>`).join('');
+ });
 }
+function pickIng(n){$('i-nom').value=n;$('i-sug').innerHTML='';const c=CAN.find(x=>x.nombre===n);$('i-hint').textContent=c?`✓ en lista: $${c.precio_gr}/gr`:'';$('i-cant').focus()}
 async function saveIng(){
- const n=$('i-nom').value.trim(),q=+$('i-cant').value;
- if(!n||!q)return alert('Falta ingrediente o cantidad');
- await api('/ingredientes',{method:'POST',body:JSON.stringify({receta_id:SEL.id,nombre:n,cantidad:q,nota_nuevo:$('i-nuevo').value||null})});
+ const n=$('i-nom').value.trim(),q=+($('i-cant').value||'').toString().replace(',','.');
+ if(!n)return alert('Escribe el ingrediente');
+ if(!q||q<=0)return alert('Escribe la cantidad en gramos');
+ try{
+  await api('/ingredientes',{method:'POST',body:JSON.stringify({receta_id:SEL.id,nombre:n,cantidad:q,nota_nuevo:$('i-nuevo').value||null})});
+ }catch(e){alert('Error guardando: '+(e&&e.message?e.message:'revisa la conexión'));return}
  vIng()}
 async function delIng(id){await api('/ingredientes/'+id,{method:'DELETE'});vIng()}
 
