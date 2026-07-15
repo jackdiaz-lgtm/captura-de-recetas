@@ -75,7 +75,7 @@ function show(t){TAB=t;['rec','ing','pro','ren','exp'].forEach(x=>$('t-'+x).clas
 // ---------- RECETAS ----------
 function vRec(){
  let list=RECS.map(r=>`<div class="item" onclick="selReceta(${r.id})">
-   <div><b>${r.nombre}</b><br><small>${r.area} · ${r.tipo} · ${r.n_ing} ing · ${r.n_pasos} pasos · ${money(r.costo)}</small></div>
+   <div><b>${r.nombre}</b><br><small>${r.area} · ${r.tipo} · ${r.n_ing} ing · ${r.n_pasos} pasos</small></div>
    <span class="pill ${r.estado}">${r.estado}</span></div>`).join('');
  $('main').innerHTML=`<div class="card"><h2>➕ Nueva / editar receta</h2>
   <label>Nombre</label><input id="r-nom" list="dl-rec"><datalist id="dl-rec">${RECS.map(r=>`<option value="${r.nombre}">`).join('')}</datalist>
@@ -112,19 +112,19 @@ async function vIng(){
   <label>Si es NUEVO: proveedor + presentación + precio</label><input id="i-nuevo" placeholder="solo si no está en la lista">
   <button class="btn" onclick="saveIng()">AGREGAR</button><p class="hint" id="i-hint"></p></div>
   <div class="card"><h2>Ingredientes capturados</h2>
-  ${d.ingredientes.map(i=>`<div class="item"><div><b>${i.nombre}</b><br><small>${i.cantidad}g × ${i.precio_gr??'⚠️ nuevo'} = ${i.subtotal?money(i.subtotal):'—'}</small></div><button class="del" onclick="delIng(${i.id})">✕</button></div>`).join('')}
-  <div class="tot">Costo receta: ${money(tot)}</div></div>`;
+  ${d.ingredientes.map(i=>`<div class="item"><div><b>${i.nombre}</b><br><small>${i.cantidad} g${i.precio_gr==null?' · ⚠️ NUEVO — anotar proveedor y precio':''}</small></div><button class="del" onclick="delIng(${i.id})">✕</button></div>`).join('')}
+  </div>`;
  const norm=s=>s.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'');
  $('i-nom').addEventListener('input',e=>{
   const v=norm(e.target.value.trim());
   const exact=CAN.find(x=>norm(x.nombre)===v);
-  $('i-hint').textContent=exact?`✓ en lista: $${exact.precio_gr}/gr`:'';
+  $('i-hint').textContent=exact?'✓ está en la lista':'';
   if(v.length<2){$('i-sug').innerHTML='';return}
   const m=CAN.filter(x=>norm(x.nombre).includes(v)).slice(0,8);
-  $('i-sug').innerHTML=m.map(x=>`<button class="sug" onclick="pickIng('${x.nombre.replace(/'/g,"\\\\'")}')">${x.nombre} · $${x.precio_gr}/gr</button>`).join('');
+  $('i-sug').innerHTML=m.map(x=>`<button class="sug" onclick="pickIng('${x.nombre.replace(/'/g,"\\\\'")}')">${x.nombre}</button>`).join('');
  });
 }
-function pickIng(n){$('i-nom').value=n;$('i-sug').innerHTML='';const c=CAN.find(x=>x.nombre===n);$('i-hint').textContent=c?`✓ en lista: $${c.precio_gr}/gr`:'';$('i-cant').focus()}
+function pickIng(n){$('i-nom').value=n;$('i-sug').innerHTML='';const c=CAN.find(x=>x.nombre===n);$('i-hint').textContent=c?'✓ está en la lista':'';$('i-cant').focus()}
 async function saveIng(){
  const n=$('i-nom').value.trim(),q=+($('i-cant').value||'').toString().replace(',','.');
  if(!n)return alert('Escribe el ingrediente');
