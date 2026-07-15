@@ -60,6 +60,16 @@ def init():
             with open(os.path.join(BASE, "seed_recetas.json"), encoding="utf-8") as f:
                 for r in json.load(f):
                     c.execute("INSERT OR IGNORE INTO recetas(nombre,area,tipo) VALUES(?,?,?)", r)
+        # precios oficiales del menu: force=1 siempre pisa; force=0 solo llena vacios
+        try:
+            with open(os.path.join(BASE, "seed_precios.json"), encoding="utf-8") as f:
+                for nombre, precio, force in json.load(f):
+                    if force:
+                        c.execute("UPDATE recetas SET precio_carta=? WHERE nombre=?", (precio, nombre))
+                    else:
+                        c.execute("UPDATE recetas SET precio_carta=? WHERE nombre=? AND (precio_carta IS NULL OR precio_carta=0)", (precio, nombre))
+        except FileNotFoundError:
+            pass
 
 
 init()
