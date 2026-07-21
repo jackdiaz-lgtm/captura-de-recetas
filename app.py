@@ -98,9 +98,12 @@ def costo_gramo_base(con, receta_id, cache, stack):
     stack.add(receta_id)
     rec = con.execute("SELECT rinde_final, peso_crudo FROM recetas WHERE id=?", (receta_id,)).fetchone()
     yield_g = (rec["rinde_final"] or rec["peso_crudo"]) if rec else None
+    ingredientes = con.execute("SELECT nombre, cantidad FROM ingredientes WHERE receta_id=?", (receta_id,)).fetchall()
     total = 0.0
-    completo = yield_g is not None
-    for ing in con.execute("SELECT nombre, cantidad FROM ingredientes WHERE receta_id=?", (receta_id,)):
+    # una base sin ningun ingrediente cargado NO esta completa aunque tenga rendimiento
+    # (si no, costaria $0/gr y abarataria falsamente todo lo que la use)
+    completo = yield_g is not None and len(ingredientes) > 0
+    for ing in ingredientes:
         precio_gr, _ = resolver_ingrediente(con, ing["nombre"], cache, stack)
         if precio_gr is None:
             completo = False
