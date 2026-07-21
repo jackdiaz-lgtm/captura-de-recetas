@@ -50,11 +50,12 @@ def init():
             id INTEGER PRIMARY KEY AUTOINCREMENT, ingrediente TEXT,
             bruto REAL, limpio REAL, cocido REAL);
         """)
-        n = c.execute("SELECT COUNT(*) FROM canonicos").fetchone()[0]
-        if n == 0:
-            with open(os.path.join(BASE, "seed_canonicos.json"), encoding="utf-8") as f:
-                items = json.load(f)
-            c.executemany("INSERT OR IGNORE INTO canonicos VALUES(?,?)", items)
+        # lista de precios: se resincroniza en CADA arranque (upsert), no solo la primera vez
+        with open(os.path.join(BASE, "seed_canonicos.json"), encoding="utf-8") as f:
+            items = json.load(f)
+        c.executemany(
+            "INSERT INTO canonicos(nombre,precio_gr) VALUES(?,?) "
+            "ON CONFLICT(nombre) DO UPDATE SET precio_gr=excluded.precio_gr", items)
         n = c.execute("SELECT COUNT(*) FROM recetas").fetchone()[0]
         if n == 0:
             with open(os.path.join(BASE, "seed_recetas.json"), encoding="utf-8") as f:
