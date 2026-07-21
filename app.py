@@ -112,10 +112,19 @@ def costo_gramo_base(con, receta_id, cache, stack):
     return result
 
 
+def _words(s):
+    import re
+    return re.findall(r"[a-z0-9]+", norm(s))
+
+
 def resolver_ingrediente(con, nombre, cache, stack):
     """Devuelve (precio_gr, origen) para un nombre de ingrediente:
     'directo' si está en Precios_Maestros/canonicos, 'base' si es otra receta
-    base ya capturada (resuelto en cascada), None/'pendiente' si no se encuentra."""
+    base ya capturada (resuelto en cascada), None/'pendiente' si no se encuentra.
+    Si no hay match exacto, intenta un match difuso: el nombre escrito por el chef
+    es un prefijo de palabras exacto de un único candidato (ej. 'platano' ->
+    'Plátano maduro', 'suero' -> 'Suero costeño (D1)'). Si hay más de un candidato
+    (ej. 'queso' calzaría con varios quesos), NO se adivina — queda pendiente."""
     target = norm(nombre)
     for k in con.execute("SELECT nombre, precio_gr FROM canonicos"):
         if norm(k["nombre"]) == target and k["precio_gr"] is not None:
@@ -123,6 +132,28 @@ def resolver_ingrediente(con, nombre, cache, stack):
     for rec in con.execute("SELECT id, nombre FROM recetas"):
         if norm(rec["nombre"]) == target:
             pg = costo_gramo_base(con, rec["id"], cache, stack)
+            if pg is not None:
+                return pg, "base"
+            return None, "base_incompleta"
+
+    target_words = _words(nombre)
+    if target_words:
+        candidatos = []
+        for k in con.execute("SELECT nombre, precio_gr FROM canonicos"):
+            if k["precio_gr"] is None:
+                continue
+            w = _words(k["nombre"])
+            if w[:len(target_words)] == target_words:
+                candidatos.append(("directo", k["precio_gr"]))
+        for rec in con.execute("SELECT id, nombre FROM recetas"):
+            w = _words(rec["nombre"])
+            if w[:len(target_words)] == target_words:
+                candidatos.append(("base", rec["id"]))
+        if len(candidatos) == 1:
+            tipo, val = candidatos[0]
+            if tipo == "directo":
+                return val, "directo"
+            pg = costo_gramo_base(con, val, cache, stack)
             if pg is not None:
                 return pg, "base"
             return None, "base_incompleta"
