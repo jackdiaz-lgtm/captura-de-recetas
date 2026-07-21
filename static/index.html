@@ -36,6 +36,11 @@ input:focus,select:focus{border-color:var(--med);outline:none}
 #login .btn{max-width:220px;background:#fff;color:var(--dark)}
 h2{font-size:15px;color:var(--dark);margin-bottom:8px}
 .selrec{background:#FFF2CC;border:2px solid var(--med);border-radius:10px;padding:10px;font-weight:800;margin-bottom:12px;font-size:14px}
+.semaforo{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.sf-verde{background:#2e7d32}.sf-amarillo{background:#E9A13B}.sf-rojo{background:#c62828}
+.fcrow{display:flex;justify-content:space-between;align-items:center;padding:10px 4px;border-bottom:1px solid #eee}
+.fcnum{font-weight:800;font-size:15px}
+nav button{font-size:11px}
 </style>
 </head>
 <body>
@@ -54,6 +59,7 @@ h2{font-size:15px;color:var(--dark);margin-bottom:8px}
   <button id="t-ing" onclick="show('ing')">⚖️ Ingredientes</button>
   <button id="t-pro" onclick="show('pro')">👣 Procesos</button>
   <button id="t-ren" onclick="show('ren')">🥩 Rendim.</button>
+  <button id="t-adm" onclick="show('adm')">💰 Admin</button>
   <button id="t-exp" onclick="show('exp')">📤 Exportar</button>
 </nav>
 
@@ -70,8 +76,8 @@ function selReceta(id){SEL=RECS.find(r=>r.id===id);show(TAB==='rec'?'ing':TAB)}
 function selHtml(){return SEL?`<div class="selrec">Receta activa: ${SEL.nombre} <button class="btn small sec" style="float:right" onclick="show('rec')">cambiar</button></div>`:`<div class="selrec">⚠️ Elige una receta en la pestaña Recetas</div>`}
 function money(v){return '$'+Math.round(v||0).toLocaleString('es-CO')}
 
-function show(t){TAB=t;['rec','ing','pro','ren','exp'].forEach(x=>$('t-'+x).classList.toggle('act',x===t));
- if(t==='rec')vRec();if(t==='ing')vIng();if(t==='pro')vPro();if(t==='ren')vRen();if(t==='exp')vExp()}
+function show(t){TAB=t;['rec','ing','pro','ren','adm','exp'].forEach(x=>$('t-'+x).classList.toggle('act',x===t));
+ if(t==='rec')vRec();if(t==='ing')vIng();if(t==='pro')vPro();if(t==='ren')vRen();if(t==='adm')vAdm();if(t==='exp')vExp()}
 
 // ---------- RECETAS ----------
 function vRec(){
@@ -183,6 +189,45 @@ async function saveRen(){
  if(!$('n-nom').value.trim())return alert('Falta el ingrediente');
  await api('/rendimientos',{method:'POST',body:JSON.stringify({ingrediente:$('n-nom').value,bruto:+$('n-b').value||null,limpio:+$('n-l').value||null,cocido:+$('n-c').value||null})});
  vRen()}
+
+// ---------- ADMIN (rentabilidad + ingredientes nuevos) ----------
+async function vAdm(){
+ $('main').innerHTML=`<div class="card"><p>Cargando...</p></div>`;
+ const [r, pend] = await Promise.all([api('/rentabilidad'), api('/pendientes')]);
+ let pendHtml = '<p style="font-size:13px;color:#777">Ningún ingrediente pendiente de precio 🎉</p>';
+ if(pend.length){
+  pendHtml = pend.map(p=>`<div class="card" style="padding:10px 12px;margin-bottom:8px">
+    <b>${p.nombre}</b>
+    <div style="font-size:12px;color:#777;margin:4px 0">${p.usos.map(u=>u.receta+' ('+u.cantidad+'g)').join(', ')}</div>
+    ${p.nota_nuevo?`<div style="font-size:12px;color:var(--dark);margin-bottom:6px">📝 ${p.nota_nuevo}</div>`:''}
+    <div class="row"><div><input type="number" step="0.01" placeholder="$ por gramo" id="pg-${p.nombre.replace(/[^a-z0-9]/gi,'_')}"></div>
+    <div><button class="btn small" style="width:100%" onclick="promover('${p.nombre.replace(/'/g,"\\\\'")}')">GUARDAR PRECIO</button></div></div>
+  </div>`).join('');
+ }
+ const fmtFC=(p)=>{
+  if(p.fc_pct==null) return p.n_ing===0?'sin capturar':'falta: '+p.faltantes.join(', ');
+  return `<span class="semaforo sf-${p.semaforo}"></span><span class="fcnum">${p.fc_pct}%</span>`;
+ };
+ const platosHtml = r.platos.filter(p=>p.n_ing>0).map(p=>`<div class="fcrow">
+   <div><b>${p.nombre}</b><br><small>costo/porción ${p.costo_porcion?money(p.costo_porcion):'—'} · carta ${p.precio_carta?money(p.precio_carta):'—'}</small></div>
+   <div style="text-align:right">${fmtFC(p)}</div></div>`).join('');
+ const sinEmpezar = r.platos.filter(p=>p.n_ing===0).length;
+ const basesHtml = r.bases.map(b=>`<div class="fcrow"><div><b>${b.nombre}</b> <span class="tagbase">base</span></div>
+   <div>${b.precio_gr!=null?money(b.precio_gr)+'/gr':'incompleta'}</div></div>`).join('');
+ $('main').innerHTML=`<div class="card"><h2>💰 Rentabilidad por plato</h2>
+  <p style="font-size:12px;color:#777;margin-bottom:6px">🟢 &lt;29% · 🟡 29–32% · 🔴 &gt;32% de food cost. ${sinEmpezar} platos sin empezar a capturar (no aparecen abajo).</p>
+  ${platosHtml||'<p style="font-size:13px;color:#777">Nada capturado aún</p>'}</div>
+  <div class="card"><h2>🧪 Recetas base ($/gr)</h2>${basesHtml}</div>
+  <div class="card"><h2>🆕 Ingredientes nuevos sin precio (${pend.length})</h2>${pendHtml}</div>`;
+}
+async function promover(nombre){
+ const id='pg-'+nombre.replace(/[^a-z0-9]/gi,'_');
+ const v=+document.getElementById(id).value;
+ if(!v||v<=0)return alert('Escribe el precio por gramo');
+ await api('/canonicos',{method:'POST',body:JSON.stringify({nombre,precio_gr:v})});
+ CAN=await api('/canonicos');
+ vAdm();
+}
 
 // ---------- EXPORT ----------
 function vExp(){

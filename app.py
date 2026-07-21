@@ -183,6 +183,11 @@ class Ingrediente(BaseModel):
     nota_nuevo: str | None = None
 
 
+class CanonPrecio(BaseModel):
+    nombre: str
+    precio_gr: float
+
+
 class Paso(BaseModel):
     receta_id: int
     num: int
@@ -237,6 +242,93 @@ def recetas(x_pin: str = Header("")):
                     total += (ing["cantidad"] or 0) * pg
             r["costo"] = total
         return rs
+
+
+@app.get("/api/rentabilidad")
+def rentabilidad(x_pin: str = Header("")):
+    """Vista administrativa: costo, precio de carta y food cost % por plato,
+    ordenado del mas critico al mejor. Las bases se muestran aparte con su $/gr."""
+    check(x_pin)
+    with db() as c:
+        rs = [dict(r) for r in c.execute("SELECT * FROM recetas ORDER BY nombre")]
+        cache = {}
+        platos, bases = [], []
+        for r in rs:
+            ings = c.execute("SELECT nombre, cantidad FROM ingredientes WHERE receta_id=?", (r["id"],)).fetchall()
+            n_ing = len(ings)
+            total = 0.0
+            completo = n_ing > 0
+            faltantes = []
+            for ing in ings:
+                pg, _ = resolver_ingrediente(c, ing["nombre"], cache, {r["id"]})
+                if pg is None:
+                    completo = False
+                    faltantes.append(ing["nombre"])
+                else:
+                    total += (ing["cantidad"] or 0) * pg
+            yield_g = r["rinde_final"] or r["peso_crudo"]
+            if r["tipo"] == "BASE":
+                bases.append({
+                    "nombre": r["nombre"], "n_ing": n_ing, "completo": completo,
+                    "faltantes": faltantes,
+                    "precio_gr": round(total / yield_g, 2) if (completo and yield_g) else None,
+                })
+            else:
+                costo_porcion = None
+                fc = None
+                semaforo = None
+                if completo and r["porciones"]:
+                    costo_porcion = round(total / r["porciones"], 0)
+                    if r["precio_carta"]:
+                        fc = round(costo_porcion / (r["precio_carta"] / 1.08) * 100, 1)
+                        semaforo = "verde" if fc < 29 else ("amarillo" if fc <= 32 else "rojo")
+                platos.append({
+                    "nombre": r["nombre"], "area": r["area"], "tipo": r["tipo"], "estado": r["estado"],
+                    "n_ing": n_ing, "completo": completo, "faltantes": faltantes,
+                    "porciones": r["porciones"], "costo_total": round(total, 0) if n_ing else None,
+                    "costo_porcion": costo_porcion, "precio_carta": r["precio_carta"],
+                    "fc_pct": fc, "semaforo": semaforo,
+                })
+        orden = {"rojo": 0, "amarillo": 1, "verde": 2, None: 3}
+        platos.sort(key=lambda p: (orden[p["semaforo"]], -(p["fc_pct"] or 0)))
+        return {"platos": platos, "bases": bases}
+
+
+@app.get("/api/pendientes")
+def pendientes(x_pin: str = Header("")):
+    """Ingredientes que el chef escribio y NO tienen precio real (o traen nota de
+    'es nuevo'), agrupados por nombre, para que el admin les ponga precio y queden
+    disponibles para todas las recetas que los usan."""
+    check(x_pin)
+    with db() as c:
+        cache = {}
+        agrupado = {}
+        for i in c.execute(
+                "SELECT i.nombre, i.cantidad, i.nota_nuevo, re.nombre AS receta "
+                "FROM ingredientes i JOIN recetas re ON re.id=i.receta_id ORDER BY i.nombre"):
+            pg, origen = resolver_ingrediente(c, i["nombre"], cache, set())
+            if pg is not None:
+                continue  # ya tiene precio real (directo o via base) - no es pendiente aunque tenga nota vieja
+            k = i["nombre"]
+            if k not in agrupado:
+                agrupado[k] = {"nombre": k, "nota_nuevo": i["nota_nuevo"], "usos": []}
+            elif i["nota_nuevo"] and not agrupado[k]["nota_nuevo"]:
+                agrupado[k]["nota_nuevo"] = i["nota_nuevo"]
+            agrupado[k]["usos"].append({"receta": i["receta"], "cantidad": i["cantidad"]})
+        return sorted(agrupado.values(), key=lambda x: x["nombre"])
+
+
+@app.post("/api/canonicos")
+def crear_canonico(p: CanonPrecio, x_pin: str = Header("")):
+    """Da de alta o corrige el precio de un ingrediente en la lista maestra.
+    Se usa para 'promover' un ingrediente nuevo que el chef marco con nota."""
+    check(x_pin)
+    with db() as c:
+        c.execute(
+            "INSERT INTO canonicos(nombre,precio_gr) VALUES(?,?) "
+            "ON CONFLICT(nombre) DO UPDATE SET precio_gr=excluded.precio_gr",
+            (p.nombre.strip(), p.precio_gr))
+    return {"ok": True}
 
 
 @app.post("/api/recetas")
