@@ -116,10 +116,10 @@ def resolver_ingrediente(con, nombre, cache, stack):
     """Devuelve (precio_gr, origen) para un nombre de ingrediente:
     'directo' si está en Precios_Maestros/canonicos, 'base' si es otra receta
     base ya capturada (resuelto en cascada), None/'pendiente' si no se encuentra."""
-    row = con.execute("SELECT precio_gr FROM canonicos WHERE nombre=?", (nombre,)).fetchone()
-    if row and row["precio_gr"] is not None:
-        return row["precio_gr"], "directo"
     target = norm(nombre)
+    for k in con.execute("SELECT nombre, precio_gr FROM canonicos"):
+        if norm(k["nombre"]) == target and k["precio_gr"] is not None:
+            return k["precio_gr"], "directo"
     for rec in con.execute("SELECT id, nombre FROM recetas"):
         if norm(rec["nombre"]) == target:
             pg = costo_gramo_base(con, rec["id"], cache, stack)
