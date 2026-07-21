@@ -29,6 +29,7 @@ input:focus,select:focus{border-color:var(--med);outline:none}
 .tot{font-size:15px;font-weight:800;color:var(--dark);text-align:right;margin-top:8px}
 .del{color:var(--warn);border:0;background:none;font-size:18px;padding:4px 8px}
 .sug{display:block;width:100%;text-align:left;padding:10px 12px;margin-top:4px;border:1.5px solid var(--med);border-radius:8px;background:#FFF6EC;font-size:15px;color:#3B2A1A}
+.tagbase{display:inline-block;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px;background:var(--blue);color:#fff;vertical-align:middle}
 .hint{font-size:12px;color:#777;margin-top:6px}
 #login{position:fixed;inset:0;background:var(--dark);display:flex;flex-direction:column;justify-content:center;align-items:center;z-index:99;color:#fff}
 #login input{max-width:220px;text-align:center;font-size:26px;letter-spacing:8px}
@@ -74,9 +75,10 @@ function show(t){TAB=t;['rec','ing','pro','ren','exp'].forEach(x=>$('t-'+x).clas
 
 // ---------- RECETAS ----------
 function vRec(){
- let list=RECS.map(r=>`<div class="item" onclick="selReceta(${r.id})">
-   <div><b>${r.nombre}</b><br><small>${r.area} · ${r.tipo} · ${r.n_ing} ing · ${r.n_pasos} pasos</small></div>
-   <span class="pill ${r.estado}">${r.estado}</span></div>`).join('');
+ let list=RECS.map(r=>`<div class="item"><div onclick="selReceta(${r.id})" style="flex:1;cursor:pointer">
+   <b>${r.nombre}</b><br><small>${r.area} · ${r.tipo} · ${r.n_ing} ing · ${r.n_pasos} pasos</small></div>
+   <span class="pill ${r.estado}">${r.estado}</span>
+   <button class="del" onclick="event.stopPropagation();delRec(${r.id},'${r.nombre.replace(/'/g,"\\\\'")}')" title="borrar (si es duplicada)">✕</button></div>`).join('');
  $('main').innerHTML=`<div class="card"><h2>➕ Nueva / editar receta</h2>
   <label>Nombre</label><input id="r-nom" list="dl-rec"><datalist id="dl-rec">${RECS.map(r=>`<option value="${r.nombre}">`).join('')}</datalist>
   <div class="row"><div><label>Área</label><select id="r-area"><option>Restaurante</option><option>Panadería</option><option>Bebidas</option></select></div>
@@ -99,6 +101,11 @@ async function saveRec(){
  if(!b.nombre)return alert('Falta el nombre');
  const res=await api('/recetas',{method:'POST',body:JSON.stringify(b)});
  await loadRecs();SEL=RECS.find(r=>r.id===res.id);vRec();window.scrollTo(0,0)}
+async function delRec(id,nombre){
+ if(!confirm('¿Borrar "'+nombre+'" y todo lo capturado en ella (ingredientes y pasos)? Úsalo solo si es una receta duplicada.'))return;
+ await api('/recetas/'+id,{method:'DELETE'});
+ if(SEL&&SEL.id===id)SEL=null;
+ await loadRecs();vRec()}
 
 // ---------- INGREDIENTES ----------
 async function vIng(){
@@ -112,19 +119,19 @@ async function vIng(){
   <label>Si es NUEVO: proveedor + presentación + precio</label><input id="i-nuevo" placeholder="solo si no está en la lista">
   <button class="btn" onclick="saveIng()">AGREGAR</button><p class="hint" id="i-hint"></p></div>
   <div class="card"><h2>Ingredientes capturados</h2>
-  ${d.ingredientes.map(i=>`<div class="item"><div><b>${i.nombre}</b><br><small>${i.cantidad} g${i.precio_gr==null?' · ⚠️ NUEVO — anotar proveedor y precio':''}</small></div><button class="del" onclick="delIng(${i.id})">✕</button></div>`).join('')}
+  ${d.ingredientes.map(i=>`<div class="item"><div><b>${i.nombre}</b>${i.origen==='base'?' <span class="tagbase">preparación base</span>':''}<br><small>${i.cantidad} g${i.origen==='pendiente'?' · ⚠️ NUEVO — anotar proveedor y precio':''}${i.origen==='base_incompleta'?' · esta base aún tiene ingredientes sin precio':''}</small></div><button class="del" onclick="delIng(${i.id})">✕</button></div>`).join('')}
   </div>`;
  const norm=s=>s.toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g,'');
  $('i-nom').addEventListener('input',e=>{
   const v=norm(e.target.value.trim());
   const exact=CAN.find(x=>norm(x.nombre)===v);
-  $('i-hint').textContent=exact?'✓ está en la lista':'';
+  $('i-hint').textContent=exact?(exact.tipo==='base'?'✓ es una preparación base ya capturada':'✓ está en la lista'):'';
   if(v.length<2){$('i-sug').innerHTML='';return}
   const m=CAN.filter(x=>norm(x.nombre).includes(v)).slice(0,8);
-  $('i-sug').innerHTML=m.map(x=>`<button class="sug" onclick="pickIng('${x.nombre.replace(/'/g,"\\\\'")}')">${x.nombre}</button>`).join('');
+  $('i-sug').innerHTML=m.map(x=>`<button class="sug" onclick="pickIng('${x.nombre.replace(/'/g,"\\\\'")}')">${x.nombre}${x.tipo==='base'?' <span class="tagbase">base</span>':''}</button>`).join('');
  });
 }
-function pickIng(n){$('i-nom').value=n;$('i-sug').innerHTML='';const c=CAN.find(x=>x.nombre===n);$('i-hint').textContent=c?'✓ está en la lista':'';$('i-cant').focus()}
+function pickIng(n){$('i-nom').value=n;$('i-sug').innerHTML='';const c=CAN.find(x=>x.nombre===n);$('i-hint').textContent=c?(c.tipo==='base'?'✓ es una preparación base ya capturada':'✓ está en la lista'):'';$('i-cant').focus()}
 async function saveIng(){
  const n=$('i-nom').value.trim(),q=+($('i-cant').value||'').toString().replace(',','.');
  if(!n)return alert('Escribe el ingrediente');

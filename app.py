@@ -81,6 +81,54 @@ def check(pin):
         raise HTTPException(401, "PIN incorrecto")
 
 
+def norm(s):
+    import unicodedata
+    s = unicodedata.normalize("NFD", (s or "").strip().lower())
+    return "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+
+
+def costo_gramo_base(con, receta_id, cache, stack):
+    """Costo $/gr de una receta-base, resolviendo en cascada:
+    ingrediente directo (canonicos) -> otra base capturada (recursivo) -> sin resolver.
+    cache: memoiza por receta_id dentro de una misma petición. stack: detecta ciclos."""
+    if receta_id in cache:
+        return cache[receta_id]
+    if receta_id in stack:
+        return None  # referencia circular: no resolver
+    stack.add(receta_id)
+    rec = con.execute("SELECT rinde_final, peso_crudo FROM recetas WHERE id=?", (receta_id,)).fetchone()
+    yield_g = (rec["rinde_final"] or rec["peso_crudo"]) if rec else None
+    total = 0.0
+    completo = yield_g is not None
+    for ing in con.execute("SELECT nombre, cantidad FROM ingredientes WHERE receta_id=?", (receta_id,)):
+        precio_gr, _ = resolver_ingrediente(con, ing["nombre"], cache, stack)
+        if precio_gr is None:
+            completo = False
+            continue
+        total += (ing["cantidad"] or 0) * precio_gr
+    stack.discard(receta_id)
+    result = (total / yield_g) if (completo and yield_g) else None
+    cache[receta_id] = result
+    return result
+
+
+def resolver_ingrediente(con, nombre, cache, stack):
+    """Devuelve (precio_gr, origen) para un nombre de ingrediente:
+    'directo' si está en Precios_Maestros/canonicos, 'base' si es otra receta
+    base ya capturada (resuelto en cascada), None/'pendiente' si no se encuentra."""
+    row = con.execute("SELECT precio_gr FROM canonicos WHERE nombre=?", (nombre,)).fetchone()
+    if row and row["precio_gr"] is not None:
+        return row["precio_gr"], "directo"
+    target = norm(nombre)
+    for rec in con.execute("SELECT id, nombre FROM recetas"):
+        if norm(rec["nombre"]) == target:
+            pg = costo_gramo_base(con, rec["id"], cache, stack)
+            if pg is not None:
+                return pg, "base"
+            return None, "base_incompleta"
+    return None, "pendiente"
+
+
 class Receta(BaseModel):
     nombre: str
     area: str = "Restaurante"
@@ -131,7 +179,12 @@ def login(x_pin: str = Header("")):
 def canonicos(x_pin: str = Header("")):
     check(x_pin)
     with db() as c:
-        return [dict(r) for r in c.execute("SELECT * FROM canonicos ORDER BY nombre")]
+        out = [{"nombre": r["nombre"], "precio_gr": r["precio_gr"], "tipo": "ingrediente"}
+               for r in c.execute("SELECT * FROM canonicos ORDER BY nombre")]
+        # bases ya capturadas: se pueden usar como ingrediente de otra receta (ej. Hogao dentro de un Sancocho)
+        out += [{"nombre": r["nombre"], "precio_gr": None, "tipo": "base"}
+                for r in c.execute("SELECT nombre FROM recetas WHERE tipo='BASE' ORDER BY nombre")]
+        return out
 
 
 @app.get("/api/recetas")
@@ -139,12 +192,16 @@ def recetas(x_pin: str = Header("")):
     check(x_pin)
     with db() as c:
         rs = [dict(r) for r in c.execute("SELECT * FROM recetas ORDER BY area, tipo, nombre")]
+        cache = {}
         for r in rs:
             r["n_ing"] = c.execute("SELECT COUNT(*) FROM ingredientes WHERE receta_id=?", (r["id"],)).fetchone()[0]
             r["n_pasos"] = c.execute("SELECT COUNT(*) FROM pasos WHERE receta_id=?", (r["id"],)).fetchone()[0]
-            r["costo"] = c.execute(
-                "SELECT COALESCE(SUM(i.cantidad*COALESCE(k.precio_gr,0)),0) FROM ingredientes i "
-                "LEFT JOIN canonicos k ON k.nombre=i.nombre WHERE i.receta_id=?", (r["id"],)).fetchone()[0]
+            total = 0.0
+            for ing in c.execute("SELECT nombre, cantidad FROM ingredientes WHERE receta_id=?", (r["id"],)):
+                pg, _ = resolver_ingrediente(c, ing["nombre"], cache, {r["id"]})
+                if pg is not None:
+                    total += (ing["cantidad"] or 0) * pg
+            r["costo"] = total
         return rs
 
 
@@ -171,11 +228,25 @@ def detalle(rid: int, x_pin: str = Header("")):
         r = c.execute("SELECT * FROM recetas WHERE id=?", (rid,)).fetchone()
         if not r:
             raise HTTPException(404)
-        ings = [dict(i) for i in c.execute(
-            "SELECT i.*, k.precio_gr, ROUND(i.cantidad*COALESCE(k.precio_gr,0),1) AS subtotal "
-            "FROM ingredientes i LEFT JOIN canonicos k ON k.nombre=i.nombre WHERE receta_id=? ORDER BY i.id", (rid,))]
+        cache = {}
+        ings = []
+        for i in c.execute("SELECT * FROM ingredientes WHERE receta_id=? ORDER BY id", (rid,)):
+            d = dict(i)
+            pg, origen = resolver_ingrediente(c, i["nombre"], cache, {rid})
+            d["precio_gr"] = pg
+            d["origen"] = origen
+            d["subtotal"] = round((i["cantidad"] or 0) * pg, 1) if pg is not None else None
+            ings.append(d)
         pasos = [dict(p) for p in c.execute("SELECT * FROM pasos WHERE receta_id=? ORDER BY num", (rid,))]
         return {"receta": dict(r), "ingredientes": ings, "pasos": pasos}
+
+
+@app.delete("/api/recetas/{rid}")
+def borrar_receta(rid: int, x_pin: str = Header("")):
+    check(x_pin)
+    with db() as c:
+        c.execute("DELETE FROM recetas WHERE id=?", (rid,))
+    return {"ok": True}
 
 
 @app.post("/api/ingredientes")
@@ -241,10 +312,13 @@ def export(x_pin: str = ""):
         ws.append(["RECETA", "ÁREA", "TIPO", "PESO CRUDO (g)", "RINDE FINAL (g)", "MERMA %",
                    "PORCIONES", "GRAMAJE/PORCIÓN", "PRECIO CARTA", "COSTO INGREDIENTES",
                    "TIEMPO+TEMP", "NOTAS", "ESTADO"])
+        cache_export = {}
         for r in c.execute("SELECT * FROM recetas ORDER BY area, tipo, nombre"):
-            costo = c.execute(
-                "SELECT COALESCE(SUM(i.cantidad*COALESCE(k.precio_gr,0)),0) FROM ingredientes i "
-                "LEFT JOIN canonicos k ON k.nombre=i.nombre WHERE i.receta_id=?", (r["id"],)).fetchone()[0]
+            costo = 0.0
+            for ing in c.execute("SELECT nombre, cantidad FROM ingredientes WHERE receta_id=?", (r["id"],)):
+                pg, _ = resolver_ingrediente(c, ing["nombre"], cache_export, {r["id"]})
+                if pg is not None:
+                    costo += (ing["cantidad"] or 0) * pg
             merma = (1 - r["rinde_final"] / r["peso_crudo"]) if r["peso_crudo"] and r["rinde_final"] else None
             gram = (r["rinde_final"] / r["porciones"]) if r["rinde_final"] and r["porciones"] else None
             ws.append([r["nombre"], r["area"], r["tipo"], r["peso_crudo"], r["rinde_final"],
@@ -252,13 +326,13 @@ def export(x_pin: str = ""):
                        round(gram, 1) if gram else None, r["precio_carta"], round(costo, 1),
                        r["tiempo_temp"], r["notas"], r["estado"]])
         wi = wb.create_sheet("INGREDIENTES")
-        wi.append(["RECETA", "INGREDIENTE", "CANTIDAD (g)", "$/gr", "SUBTOTAL", "NOTA NUEVO"])
+        wi.append(["RECETA", "INGREDIENTE", "CANTIDAD (g)", "$/gr", "SUBTOTAL", "ORIGEN", "NOTA NUEVO"])
         for i in c.execute(
-                "SELECT re.nombre AS receta, i.nombre, i.cantidad, k.precio_gr, i.nota_nuevo "
-                "FROM ingredientes i JOIN recetas re ON re.id=i.receta_id "
-                "LEFT JOIN canonicos k ON k.nombre=i.nombre ORDER BY re.nombre, i.id"):
-            sub = round(i["cantidad"] * i["precio_gr"], 1) if i["precio_gr"] else None
-            wi.append([i["receta"], i["nombre"], i["cantidad"], i["precio_gr"], sub, i["nota_nuevo"]])
+                "SELECT i.id, re.id AS receta_id, re.nombre AS receta, i.nombre, i.cantidad, i.nota_nuevo "
+                "FROM ingredientes i JOIN recetas re ON re.id=i.receta_id ORDER BY re.nombre, i.id"):
+            pg, origen = resolver_ingrediente(c, i["nombre"], cache_export, {i["receta_id"]})
+            sub = round(i["cantidad"] * pg, 1) if pg is not None else None
+            wi.append([i["receta"], i["nombre"], i["cantidad"], pg, sub, origen, i["nota_nuevo"]])
         wp = wb.create_sheet("PROCESOS")
         wp.append(["RECETA", "PASO", "ETAPA", "DESCRIPCIÓN", "ROL", "PERSONAS",
                    "MIN ACTIVO", "MIN PASIVO", "EQUIPO", "NOTA"])
