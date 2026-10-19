@@ -278,7 +278,8 @@ def rentabilidad(x_pin: str = Header("")):
                 fc = None
                 semaforo = None
                 if completo and r["porciones"]:
-                    costo_porcion = round(total / r["porciones"], 0)
+                    # Margen de error del 7% sobre el costo de la receta (platos)
+                    costo_porcion = round(total * 1.07 / r["porciones"], 0)
                     if r["precio_carta"]:
                         fc = round(costo_porcion / (r["precio_carta"] / 1.08) * 100, 1)
                         semaforo = "verde" if fc < 29 else ("amarillo" if fc <= 32 else "rojo")
